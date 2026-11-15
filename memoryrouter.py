@@ -1,1 +1,89 @@
-# MemoryRouter - Route payloads to experts by memory footprint\n# Part of the Kapildhinwa2010-dev Toolkit.\n\n"""MemoryRouter - footprint-based payload routing.\n\nLineage: DNA_DYNIMO routers. Each expert has a memory budget. The payload\nis measured with a conservative recursive size estimate and routed to the\ncheapest expert whose budget fits, so big payloads land on big experts.\n\nThe estimate is approximate: it walks containers with sys.getsizeof and\nundercounts shared or interned objects. See README limitations.\n"""\n\nfrom __future__ import annotations\n\nimport sys\n\n__all__ = ["memory_footprint", "MemoryExpert", "MemoryRouter"]\n\n\ndef memory_footprint(payload) -> int:\n    """Conservative recursive size estimate in bytes (containers included)."""\n    seen = set()\n\n    def size(obj) -> int:\n        obj_id = id(obj)\n        if obj_id in seen:\n            return 0\n        seen.add(obj_id)\n        total = sys.getsizeof(obj)\n        if isinstance(obj, dict):\n            for key, value in obj.items():\n                total += size(key) + size(value)\n        elif isinstance(obj, (list, tuple, set, frozenset)):\n            for item in obj:\n                total += size(item)\n        return total\n\n    return size(payload)\n\n\nclass MemoryExpert:\n    """A routing target with a byte budget and a served-bytes counter."""\n\n    def __init__(self, name: str, budget_bytes: int, cost: float = 1.0) -> None:\n        if not name:\n            raise ValueError("name must be non-empty")\n        if budget_bytes <= 0:\n            raise ValueError("budget_bytes must be > 0")\n        if cost < 0:\n            raise ValueError("cost must be >= 0")\n        self.name = name\n        self.budget_bytes = int(budget_bytes)\n        self.cost = float(cost)\n        self.bytes_served = 0\n        self.calls = 0\n\n    def handle(self, payload) -> str:\n        footprint = memory_footprint(payload)\n        if footprint > self.budget_bytes:\n            raise ValueError("payload of {} bytes exceeds budget of {} bytes".format(footprint, self.budget_bytes))\n        self.bytes_served += footprint\n        self.calls += 1\n        return "stored by {} ({} bytes)".format(self.name, footprint)\n\n\nclass MemoryRouter:\n    """Route each payload to the cheapest expert whose budget fits it."""\n\n    def __init__(self) -> None:\n        self.experts: list = []\n\n    def add_expert(self, name: str, budget_bytes: int, cost: float = 1.0) -> None:\n        self.experts.append(MemoryExpert(name, budget_bytes, cost))\n\n    def route(self, payload) -> MemoryExpert:\n        if not self.experts:\n            raise ValueError("no experts registered")\n        footprint = memory_footprint(payload)\n        fitting = [e for e in self.experts if e.budget_bytes >= footprint]\n        if not fitting:\n            raise ValueError("no expert budget fits {} bytes".format(footprint))\n        return min(fitting, key=lambda e: (e.cost, e.budget_bytes))\n\n    def route_and_handle(self, payload) -> str:\n        return self.route(payload).handle(payload)\n\n    def memory_report(self) -> dict:\n        return {e.name: e.bytes_served for e in self.experts}\n
+# MemoryRouter - Route payloads to experts by memory footprint
+# Part of the Kapildhinwa2010-dev Toolkit.
+
+"""MemoryRouter - footprint-based payload routing.
+
+Lineage: DNA_DYNIMO routers. Each expert has a memory budget. The payload
+is measured with a conservative recursive size estimate and routed to the
+cheapest expert whose budget fits, so big payloads land on big experts.
+
+The estimate is approximate: it walks containers with sys.getsizeof and
+undercounts shared or interned objects. See README limitations.
+"""
+
+from __future__ import annotations
+
+import sys
+
+__all__ = ["memory_footprint", "MemoryExpert", "MemoryRouter"]
+
+
+def memory_footprint(payload) -> int:
+    """Conservative recursive size estimate in bytes (containers included)."""
+    seen = set()
+
+    def size(obj) -> int:
+        obj_id = id(obj)
+        if obj_id in seen:
+            return 0
+        seen.add(obj_id)
+        total = sys.getsizeof(obj)
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                total += size(key) + size(value)
+        elif isinstance(obj, (list, tuple, set, frozenset)):
+            for item in obj:
+                total += size(item)
+        return total
+
+    return size(payload)
+
+
+class MemoryExpert:
+    """A routing target with a byte budget and a served-bytes counter."""
+
+    def __init__(self, name: str, budget_bytes: int, cost: float = 1.0) -> None:
+        if not name:
+            raise ValueError("name must be non-empty")
+        if budget_bytes <= 0:
+            raise ValueError("budget_bytes must be > 0")
+        if cost < 0:
+            raise ValueError("cost must be >= 0")
+        self.name = name
+        self.budget_bytes = int(budget_bytes)
+        self.cost = float(cost)
+        self.bytes_served = 0
+        self.calls = 0
+
+    def handle(self, payload) -> str:
+        footprint = memory_footprint(payload)
+        if footprint > self.budget_bytes:
+            raise ValueError("payload of {} bytes exceeds budget of {} bytes".format(footprint, self.budget_bytes))
+        self.bytes_served += footprint
+        self.calls += 1
+        return "stored by {} ({} bytes)".format(self.name, footprint)
+
+
+class MemoryRouter:
+    """Route each payload to the cheapest expert whose budget fits it."""
+
+    def __init__(self) -> None:
+        self.experts: list = []
+
+    def add_expert(self, name: str, budget_bytes: int, cost: float = 1.0) -> None:
+        self.experts.append(MemoryExpert(name, budget_bytes, cost))
+
+    def route(self, payload) -> MemoryExpert:
+        if not self.experts:
+            raise ValueError("no experts registered")
+        footprint = memory_footprint(payload)
+        fitting = [e for e in self.experts if e.budget_bytes >= footprint]
+        if not fitting:
+            raise ValueError("no expert budget fits {} bytes".format(footprint))
+        return min(fitting, key=lambda e: (e.cost, e.budget_bytes))
+
+    def route_and_handle(self, payload) -> str:
+        return self.route(payload).handle(payload)
+
+    def memory_report(self) -> dict:
+        return {e.name: e.bytes_served for e in self.experts}
